@@ -33,7 +33,7 @@ def main():
         for directory in (crypto / "include", crypto / "linux", zlib / "linux", zlib / "include"):
             shutil.rmtree(directory)
         options += ["-G", "Ninja", "-DCMAKE_C_COMPILER=clang", "-DCMAKE_CXX_COMPILER=clang++",
-                    "-DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld"]
+                    "-DCMAKE_C_FLAGS=-D_GNU_SOURCE", "-DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld"]
     else:
         sdk = Path(os.environ["OHOS_NDK_HOME"])
         prefix = Path(os.environ["QW_OHOS_OPENSSL"])
@@ -53,7 +53,12 @@ def main():
         library = build / "libWCDB.so"
         if args.target == "linux-x86_64":
             run("strip", "--strip-unneeded", library)
-            run("ldd", "-r", library)
+            smoke = build / "smoke.cpp"
+            smoke.write_text("#include <WCDB/WCDBCpp.h>\nint main() { return "
+                             "WCDB::Database::createInMemoryDatabase().canOpen() ? 0 : 1; }\n")
+            run("clang++", "-std=c++14", "-I", build / "export_headers", smoke, "-L", build,
+                "-lWCDB", f"-Wl,-rpath,{build.resolve()}", "-o", build / "smoke")
+            run(build / "smoke")
         else:
             run(sdk / "llvm/bin/llvm-strip", "--strip-unneeded", library)
             files["licenses/OpenSSL.txt"] = prefix / "LICENSE.txt"

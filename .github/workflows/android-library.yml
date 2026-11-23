@@ -8,6 +8,13 @@ on:
         description: Complete an existing Android release from this tag
         required: true
         type: string
+      targets:
+        description: JSON array of platform names to build
+        type: string
+        default: '["linux-x86_64","windows-x86_64","openharmony-arm64","ios","macos"]'
+      reuse_run:
+        description: Previous trusted run containing successful artifacts for this tag
+        type: string
 env:
   TAG: ${{ inputs.existing_android_tag || github.ref_name }}
 permissions:
@@ -43,13 +50,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - {target: linux-x86_64, runner: ubuntu-24.04}
-          - {target: windows-x86_64, runner: windows-2022}
-          - {target: openharmony-arm64, runner: ubuntu-24.04}
-          - {target: ios, runner: macos-15}
-          - {target: macos, runner: macos-15}
-    runs-on: ${{ matrix.runner }}
+        target: ${{ fromJSON(inputs.targets || '["linux-x86_64","windows-x86_64","openharmony-arm64","ios","macos"]') }}
+    runs-on: ${{ matrix.target == 'windows-x86_64' && 'windows-2022' || (matrix.target == 'ios' || matrix.target == 'macos') && 'macos-15' || 'ubuntu-24.04' }}
     timeout-minutes: 75
     env:
       TARGET: ${{ matrix.target }}
@@ -108,7 +110,23 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: read
     steps:
+      - if: inputs.reuse_run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS: ${{ inputs.reuse_run }}
+        run: |
+          set -euo pipefail
+          [[ "$PREVIOUS" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PREVIOUS" | jq -e --arg branch "$GITHUB_REF_NAME" '.event == "workflow_dispatch" and .head_branch == $branch and .path == ".github/workflows/android-library.yml"'
+      - if: inputs.reuse_run
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.reuse_run }}
+          path: dist
+          merge-multiple: true
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           path: dist
