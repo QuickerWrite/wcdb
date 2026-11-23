@@ -74,7 +74,8 @@ jobs:
         working-directory: source
         run: git submodule update --init --depth 1 sqlcipher zstd
       - if: runner.os == 'Windows'
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        id: vcpkg-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/AppData/Local/vcpkg/archives
           key: wcdb-vcpkg-static-md-${{ runner.os }}-${{ env.ImageVersion }}-v1
@@ -83,6 +84,11 @@ jobs:
         shell: pwsh
         run: |
           vcpkg install --classic --triplet x64-windows-static-md openssl zlib
+      - if: runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/AppData/Local/vcpkg/archives
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
       - if: matrix.target == 'openharmony-arm64'
         id: ohos
         uses: openharmony-rs/setup-ohos-sdk@cfd996a9cff9e72a7e59827cb5424fcfae4ada3e

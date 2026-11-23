@@ -26,7 +26,10 @@ def main():
         deps = Path(os.environ["VCPKG_INSTALLATION_ROOT"]) / "installed/x64-windows-static-md"
         shutil.copytree(deps / "include/openssl", crypto / "include/openssl", dirs_exist_ok=True)
         shutil.copy2(deps / "lib/libcrypto.lib", crypto / "windows/win64")
-        zlib_libs = sorted((deps / "lib").glob("z*.lib"))
+        installed = deps.parent
+        manifest = next((installed / "vcpkg/info").glob("zlib_*_x64-windows-static-md.list"))
+        zlib_libs = [installed / entry for entry in manifest.read_text().splitlines()
+                     if Path(entry).parent.as_posix() == deps.name + "/lib" and entry.endswith(".lib")]
         if len(zlib_libs) != 1:
             raise RuntimeError(f"Expected one vcpkg zlib archive, found {zlib_libs}")
         shutil.copy2(zlib_libs[0], zlib / "windows/win64/zlibstatic.lib")
