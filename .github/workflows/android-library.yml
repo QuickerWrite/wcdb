@@ -171,7 +171,16 @@ jobs:
           sha256sum *.aar *.zip > SHA256SUMS.txt
           notes="Android (ARMv7, ARM64, x86-64 and universal AARs); iOS and macOS (WCDBSwift XCFrameworks); Windows and Linux (x86-64 C++ SDKs); OpenHarmony (ARM64 C++ SDK). See SHA256SUMS.txt for integrity checks."
           if [[ "$BACKFILL" == true ]]; then
-            gh release upload "$TAG" -R "$REPO" *.zip SHA256SUMS.txt --clobber
+            gh api "repos/$REPO/releases/tags/$TAG" > "$RUNNER_TEMP/release.json"
+            for asset in *.zip; do
+              prior=$(jq -r --arg name "$asset" '.assets[] | select(.name == $name) | .digest' "$RUNNER_TEMP/release.json")
+              if [[ -n "$prior" ]]; then
+                test "$prior" = "sha256:$(sha256sum "$asset" | cut -d' ' -f1)"
+              else
+                gh release upload "$TAG" -R "$REPO" "$asset"
+              fi
+            done
+            gh release upload "$TAG" -R "$REPO" SHA256SUMS.txt --clobber
             gh release edit "$TAG" -R "$REPO" --title "WCDB $TAG" --notes "$notes"
           else
             gh release create "$TAG" -R "$REPO" --verify-tag *.aar *.zip SHA256SUMS.txt --title "WCDB $TAG" --notes "$notes"
