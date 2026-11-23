@@ -26,6 +26,21 @@ for sdk in "${sdks[@]}"; do
     'OTHER_CPLUSPLUSFLAGS=$(inherited) -Wno-invalid-specialization' build
   framework="$products/WCDBSwift.framework"
   lipo -verify_arch $archs "$framework/WCDBSwift"
+  case "$sdk" in
+    iphoneos) target=arm64-apple-ios15.0 ;;
+    iphonesimulator) target=arm64-apple-ios15.0-simulator ;;
+    macosx) target=arm64-apple-macos11.0 ;;
+  esac
+  cat > "$temp/probe.swift" <<'SWIFT'
+import WCDBSwift
+let database = Database(at: ":memory:")
+guard database.canOpen else { fatalError("WCDB open failed") }
+SWIFT
+  xcrun --sdk "$sdk" swiftc -sdk "$(xcrun --sdk "$sdk" --show-sdk-path)" \
+    -target "$target" -F "$products" "$temp/probe.swift" -o "$temp/probe-$sdk"
+  if [[ "$sdk" == macosx ]]; then
+    DYLD_FRAMEWORK_PATH="$products" "$temp/probe-$sdk"
+  fi
   args+=(-framework "$framework")
 done
 xcodebuild -create-xcframework "${args[@]}" -output "$temp/WCDBSwift.xcframework"
