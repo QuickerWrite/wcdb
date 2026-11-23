@@ -1,15 +1,22 @@
-name: QuickerWrite Android library
+name: QuickerWrite WCDB libraries
 on:
   push:
     tags: ['qw-*']
+  workflow_dispatch:
+    inputs:
+      existing_android_tag:
+        description: Complete an existing Android release from this tag
+        required: true
+        type: string
+env:
+  TAG: ${{ inputs.existing_android_tag || github.ref_name }}
 permissions:
   contents: read
 jobs:
   library:
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -25,12 +32,112 @@ jobs:
       - name: Show compiler diagnostics on failure
         if: failure()
         run: find "$RUNNER_TEMP/wcdb" -name build.log -exec tail -60 {} \;
-      - name: Publish verified AARs and SHA-256
-        working-directory: ${{ runner.temp }}/wcdb
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: android
+          path: ${{ runner.temp }}/wcdb/*.aar
+          if-no-files-found: error
+          retention-days: 3
+
+  platforms:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {target: linux-x86_64, runner: ubuntu-24.04}
+          - {target: windows-x86_64, runner: windows-2022}
+          - {target: openharmony-arm64, runner: ubuntu-24.04}
+          - {target: ios, runner: macos-15}
+          - {target: macos, runner: macos-15}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          sparse-checkout: quickerwrite
+      - shell: bash
+        run: |
+          [[ "$TAG" =~ ^qw-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$ ]]
+          git config --global core.longpaths true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: source
+          ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
+      - shell: bash
+        working-directory: source
+        run: git submodule update --init --depth 1 sqlcipher zstd
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          vcpkg install --classic --triplet x64-windows-static-md openssl zlib
+      - if: matrix.target == 'openharmony-arm64'
+        id: ohos
+        uses: openharmony-rs/setup-ohos-sdk@cfd996a9cff9e72a7e59827cb5424fcfae4ada3e
+        with:
+          version: 5.0.0
+          components: native
+      - if: matrix.target == 'openharmony-arm64'
+        env:
+          OHOS_NDK_HOME: ${{ steps.ohos.outputs.ohos_sdk_native }}
+          QW_OHOS_OPENSSL: ${{ runner.temp }}/ohos-openssl
+        run: bash quickerwrite/openssl-ohos.sh
+      - if: runner.os != 'macOS'
+        working-directory: source
+        env:
+          OHOS_NDK_HOME: ${{ steps.ohos.outputs.ohos_sdk_native }}
+          QW_OHOS_OPENSSL: ${{ runner.temp }}/ohos-openssl
+        shell: bash
+        run: python ../quickerwrite/build-desktop.py "$TARGET" ../dist
+      - if: runner.os == 'macOS'
+        working-directory: source
+        run: bash ../quickerwrite/build-apple.sh "$TARGET" "$GITHUB_WORKSPACE/dist"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    needs: [platforms, library]
+    if: always() && needs.platforms.result == 'success' && (needs.library.result == 'success' || (github.event_name == 'workflow_dispatch' && needs.library.result == 'skipped'))
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Verify and publish all six platforms
+        working-directory: dist
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BACKFILL: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           set -euo pipefail
-          sha256sum *.aar > SHA256SUMS.txt
-          sha256sum --check SHA256SUMS.txt
-          gh release create "$GITHUB_REF_NAME" *.aar SHA256SUMS.txt --verify-tag --repo "$GITHUB_REPOSITORY" --title "WCDB Android $GITHUB_REF_NAME" --notes "Android API 24 · WCDB $(cat "$GITHUB_WORKSPACE/VERSION") · OpenSSL 3.5.9 · NDK 28.2.13676358. Includes separate ARMv7, ARM64, x86-64 and universal AARs."
+          if [[ "$BACKFILL" == true ]]; then
+            gh release download "$TAG" -R "$REPO" -p '*.aar' -p SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+          fi
+          sha=$(gh api "repos/$REPO/commits/$TAG" --jq .sha)
+          for name in arm64-v8a armeabi-v7a x86_64 universal; do
+            test "$(unzip -p "$name.aar" META-INF/qw-native-build.json | jq -r .provenance.commit)" = "$sha"
+          done
+          for name in ios macos windows-x86_64 linux-x86_64 openharmony-arm64; do
+            unzip -tq "wcdb-$name.zip"
+            test "$(unzip -p "wcdb-$name.zip" SOURCE_COMMIT)" = "$sha"
+          done
+          sha256sum *.aar *.zip > SHA256SUMS.txt
+          notes="Android (ARMv7, ARM64, x86-64 and universal AARs); iOS and macOS (WCDBSwift XCFrameworks); Windows and Linux (x86-64 C++ SDKs); OpenHarmony (ARM64 C++ SDK). See SHA256SUMS.txt for integrity checks."
+          if [[ "$BACKFILL" == true ]]; then
+            gh release upload "$TAG" -R "$REPO" *.zip SHA256SUMS.txt --clobber
+            gh release edit "$TAG" -R "$REPO" --title "WCDB $TAG" --notes "$notes"
+          else
+            gh release create "$TAG" -R "$REPO" --verify-tag *.aar *.zip SHA256SUMS.txt --title "WCDB $TAG" --notes "$notes"
+          fi
