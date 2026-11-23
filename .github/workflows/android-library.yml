@@ -73,6 +73,12 @@ jobs:
         working-directory: source
         run: git submodule update --init --depth 1 sqlcipher zstd
       - if: runner.os == 'Windows'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/AppData/Local/vcpkg/archives
+          key: wcdb-vcpkg-static-md-${{ runner.os }}-${{ env.ImageVersion }}-v1
+          restore-keys: wcdb-vcpkg-static-md-${{ runner.os }}-
+      - if: runner.os == 'Windows'
         shell: pwsh
         run: |
           vcpkg install --classic --triplet x64-windows-static-md openssl zlib

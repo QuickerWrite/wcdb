@@ -26,7 +26,12 @@ def main():
         deps = Path(os.environ["VCPKG_INSTALLATION_ROOT"]) / "installed/x64-windows-static-md"
         shutil.copytree(deps / "include/openssl", crypto / "include/openssl", dirs_exist_ok=True)
         shutil.copy2(deps / "lib/libcrypto.lib", crypto / "windows/win64")
-        shutil.copy2(deps / "lib/zlib.lib", zlib / "windows/win64/zlibstatic.lib")
+        zlib_libs = sorted((deps / "lib").glob("z*.lib"))
+        if len(zlib_libs) != 1:
+            raise RuntimeError(f"Expected one vcpkg zlib archive, found {zlib_libs}")
+        shutil.copy2(zlib_libs[0], zlib / "windows/win64/zlibstatic.lib")
+        shutil.copy2(deps / "include/zlib.h", zlib / "include")
+        shutil.copy2(deps / "include/zconf.h", zlib / "include")
         options += ["-A", "x64", "-DCMAKE_SHARED_LINKER_FLAGS=Advapi32.lib User32.lib Bcrypt.lib"]
     elif args.target == "linux-x86_64":
         # Use the runner distribution's maintained OpenSSL 3 and zlib.
