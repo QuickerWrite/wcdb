@@ -1,0 +1,36 @@
+name: QuickerWrite Android library
+on:
+  push:
+    tags: ['qw-*']
+permissions:
+  contents: read
+jobs:
+  library:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: bash quickerwrite/prepare-android-native.sh
+      - run: python3 -m unittest discover -s quickerwrite -p test_wcdb_build.py
+      - name: Build the four AARs from the tagged source
+        run: python3 quickerwrite/build-wcdb.py --ndk "$ANDROID_HOME/ndk/28.2.13676358" --jobs "$(nproc)" --output "$RUNNER_TEMP/wcdb/universal.aar" --release
+      - name: Show compiler diagnostics on failure
+        if: failure()
+        run: find "$RUNNER_TEMP/wcdb" -name build.log -exec tail -60 {} \;
+      - name: Publish verified AARs and SHA-256
+        working-directory: ${{ runner.temp }}/wcdb
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha256sum *.aar > SHA256SUMS.txt
+          sha256sum --check SHA256SUMS.txt
+          gh release create "$GITHUB_REF_NAME" *.aar SHA256SUMS.txt --verify-tag --repo "$GITHUB_REPOSITORY" --title "WCDB Android $GITHUB_REF_NAME" --notes "Android API 24 · WCDB 2.1.15 · OpenSSL 3.5.9 · NDK 28.2.13676358. Includes separate ARMv7, ARM64, x86-64 and universal AARs."
