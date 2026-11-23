@@ -25,7 +25,7 @@ for sdk in "${sdks[@]}"; do
     BUILD_LIBRARY_FOR_DISTRIBUTION=YES ENABLE_USER_SCRIPT_SANDBOXING=NO \
     'OTHER_CPLUSPLUSFLAGS=$(inherited) -Wno-invalid-specialization' build
   framework="$products/WCDBSwift.framework"
-  lipo -verify_arch $archs "$framework/WCDBSwift"
+  lipo "$framework/WCDBSwift" -verify_arch $archs
   case "$sdk" in
     iphoneos) target=arm64-apple-ios15.0 ;;
     iphonesimulator) target=arm64-apple-ios15.0-simulator ;;
