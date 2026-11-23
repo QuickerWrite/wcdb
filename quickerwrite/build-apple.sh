@@ -29,7 +29,7 @@ for sdk in "${sdks[@]}"; do
   case "$sdk" in
     iphoneos) target=arm64-apple-ios15.0 ;;
     iphonesimulator) target=arm64-apple-ios15.0-simulator ;;
-    macosx) target=arm64-apple-macos11.0 ;;
+    macosx) target="$(uname -m)-apple-macos11.0" ;;
   esac
   cat > "$temp/probe.swift" <<'SWIFT'
 import WCDBSwift

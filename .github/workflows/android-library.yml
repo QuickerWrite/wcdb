@@ -12,6 +12,11 @@ on:
         description: JSON array of platform names to build
         type: string
         default: '["linux-x86_64","windows-x86_64","openharmony-arm64","ios","macos"]'
+      apple_runner:
+        description: GitHub-hosted macOS runner
+        type: choice
+        options: [macos-26, macos-15-intel]
+        default: macos-26
       reuse_runs:
         description: Space-separated successful platform run IDs for a publish-only retry (set targets to [])
         type: string
@@ -52,7 +57,7 @@ jobs:
       fail-fast: false
       matrix:
         target: ${{ fromJSON(inputs.targets || '["linux-x86_64","windows-x86_64","openharmony-arm64","ios","macos"]') }}
-    runs-on: ${{ matrix.target == 'windows-x86_64' && 'windows-2022' || (matrix.target == 'ios' || matrix.target == 'macos') && 'macos-26' || 'ubuntu-24.04' }}
+    runs-on: ${{ matrix.target == 'windows-x86_64' && 'windows-2022' || (matrix.target == 'ios' || matrix.target == 'macos') && (inputs.apple_runner || 'macos-26') || 'ubuntu-24.04' }}
     timeout-minutes: 75
     env:
       TARGET: ${{ matrix.target }}
@@ -123,7 +128,7 @@ jobs:
       always() && !cancelled() &&
       ((github.event_name == 'push' && needs.platforms.result == 'success' && needs.library.result == 'success') ||
       (github.event_name == 'workflow_dispatch' &&
-      ((inputs.targets == '[]' && inputs.reuse_runs != '') ||
+      ((inputs.reuse_runs != '' && (needs.platforms.result == 'success' || inputs.targets == '[]')) ||
       (inputs.targets == '["linux-x86_64","windows-x86_64","openharmony-arm64","ios","macos"]' && needs.platforms.result == 'success'))))
     runs-on: ubuntu-24.04
     permissions:
