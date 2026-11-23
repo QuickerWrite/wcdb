@@ -33,4 +33,4 @@ jobs:
           set -euo pipefail
           sha256sum *.aar > SHA256SUMS.txt
           sha256sum --check SHA256SUMS.txt
-          gh release create "$GITHUB_REF_NAME" *.aar SHA256SUMS.txt --verify-tag --repo "$GITHUB_REPOSITORY" --title "WCDB Android $GITHUB_REF_NAME" --notes "Android API 24 · WCDB 2.1.15 · OpenSSL 3.5.9 · NDK 28.2.13676358. Includes separate ARMv7, ARM64, x86-64 and universal AARs."
+          gh release create "$GITHUB_REF_NAME" *.aar SHA256SUMS.txt --verify-tag --repo "$GITHUB_REPOSITORY" --title "WCDB Android $GITHUB_REF_NAME" --notes "Android API 24 · WCDB $(cat "$GITHUB_WORKSPACE/VERSION") · OpenSSL 3.5.9 · NDK 28.2.13676358. Includes separate ARMv7, ARM64, x86-64 and universal AARs."

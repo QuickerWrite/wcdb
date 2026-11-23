@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Rebuild WCDB's native engine with pinned, supported crypto; never use old JNI.
 
-The upstream Java classes and SQLCipher revision/settings are unchanged. No
-user database is opened, exported or rekeyed by this build tool.
+Build Java and JNI from the same checkout, using its pinned SQLCipher revision.
 """
 import argparse
 import hashlib
@@ -13,15 +12,17 @@ import re
 import shutil
 import subprocess
 import tarfile
+import tempfile
+import xml.etree.ElementTree as ET
 import urllib.request
 import zipfile
 
 
 SOURCES = {
-    "sqlcipher": ("https://codeload.github.com/Tencent/sqlcipher/tar.gz/f049bed66ca26741f09a6e4f0603ed3af195ac96", "53c3faf8dddae330a929adae26311a03883881ca06b4434c59d208d2c3e71d46"),
+    "sqlcipher": ("https://codeload.github.com/Tencent/sqlcipher/tar.gz/445e1dbe066ee917e4475b028f90ff37efb04541", "8eda236022885af0f9a1448abc6bab6b52a56b1792042da2d97ba412fd42d356"),
     "zstd": ("https://codeload.github.com/facebook/zstd/tar.gz/69036dffe50f385bd3b7b187e3fd230f4b2ef97e", "7311499518b955c7489c5188cb722fdeae1b14d9f8d2266d1e406473abcaef74"),
     "openssl": ("https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz", "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a"),
-    "main": ("https://repo.maven.apache.org/maven2/com/tencent/wcdb/main/2.1.15/main-2.1.15.aar", "752663ece1367f4336852644eb010823b968f192f15caa2e09f547ed083258fb"),
+    "annotations": ("https://repo.maven.apache.org/maven2/org/jetbrains/annotations/13.0/annotations-13.0.jar", "ace2a10dc8e2d5fd34925ecac03e4988b2c0f851650c94b8cef49ba1bd111478"),
 }
 ABIS = {
     "arm64-v8a": ("android-arm64", "aarch64-linux-android"),
@@ -32,11 +33,14 @@ ABIS = {
 
 def download(name, cache):
     url, digest = SOURCES[name]
-    path = cache / name
+    path = cache / digest
     if not path.exists():
         pending = path.with_suffix(".download")
         with urllib.request.urlopen(url, timeout=120) as src, pending.open("wb") as dst:
             shutil.copyfileobj(src, dst)
+        if hashlib.sha256(pending.read_bytes()).hexdigest() != digest:
+            pending.unlink()
+            raise RuntimeError(f"Source integrity check failed: {name}")
         pending.replace(path)
     if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
         raise RuntimeError(f"Source integrity check failed: {name}")
@@ -64,6 +68,39 @@ NDK_VERSION = "28.2.13676358"
 
 
 PROJECT = Path(__file__).resolve().parents[1]
+
+
+def check_submodule_sources():
+    for name in ("sqlcipher", "zstd"):
+        revision = subprocess.check_output(
+            ["git", "-C", str(PROJECT), "rev-parse", f"HEAD:{name}"], text=True
+        ).strip()
+        if SOURCES[name][0].rsplit("/", 1)[-1] != revision:
+            raise RuntimeError(f"{name} archive does not match the checked-out submodule revision")
+
+
+def build_java(main_dir, annotations, output):
+    sources = sorted((main_dir / "src/main/java").rglob("*.java"))
+    with tempfile.TemporaryDirectory(dir=output.parent) as tmp:
+        classes = Path(tmp)
+        subprocess.run(["javac", "--release", "8", "-encoding", "UTF-8", "-proc:none",
+                        "-classpath", annotations, "-d", classes, *sources], check=True)
+        with zipfile.ZipFile(output, "w") as jar:
+            for path in sorted(classes.rglob("*.class")):
+                entry = zipfile.ZipInfo(path.relative_to(classes).as_posix())
+                jar.writestr(entry, path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED)
+
+
+def android_manifest(main_dir):
+    android = "http://schemas.android.com/apk/res/android"
+    ET.register_namespace("android", android)
+    manifest = ET.parse(main_dir / "src/main/AndroidManifest.xml").getroot()
+    manifest.set("package", "com.tencent.wcdb.core")
+    sdk = manifest.find("uses-sdk")
+    if sdk is None:
+        sdk = ET.SubElement(manifest, "uses-sdk")
+    sdk.set(f"{{{android}}}minSdkVersion", "24")
+    return ET.tostring(manifest, encoding="utf-8", xml_declaration=True)
 
 
 def provenance():
@@ -159,10 +196,14 @@ def main():
     if not (toolchain / "bin/clang").is_file():
         parser.error("A Linux/macOS Android NDK is required")
     env = dict(os.environ, ANDROID_NDK_ROOT=str(ndk), PATH=f"{toolchain / 'bin'}:{os.environ['PATH']}")
+    check_submodule_sources()
     archives = {name: download(name, cache) for name in SOURCES}
     source = PROJECT
     for name in ("sqlcipher", "zstd"):
         extract(archives[name], source / name)
+    main_dir = source / "src/java/main"
+    classes = root / "classes.jar"
+    build_java(main_dir, archives["annotations"], classes)
     libraries = {}
     for abi in abis:
         target, triple = ABIS[abi]
@@ -190,10 +231,11 @@ def main():
             run([toolchain / "bin/llvm-strip", "--strip-unneeded", runtime])
             libraries[f"jni/{abi}/libc++_shared.so"] = runtime
     pending = output.with_suffix(".tmp")
-    with zipfile.ZipFile(archives["main"]) as original, zipfile.ZipFile(pending, "w", zipfile.ZIP_DEFLATED) as rebuilt:
-        for member in original.infolist():
-            if not member.filename.startswith("jni/"):
-                rebuilt.writestr(member, original.read(member))
+    with zipfile.ZipFile(pending, "w", zipfile.ZIP_DEFLATED) as rebuilt:
+        rebuilt.writestr("AndroidManifest.xml", android_manifest(main_dir))
+        rebuilt.writestr("R.txt", "")
+        rebuilt.write(classes, "classes.jar")
+        rebuilt.write(main_dir / "proguard-rules.pro", "proguard.txt")
         for name, path in libraries.items():
             rebuilt.write(path, name)
         for name, license_path in {
@@ -204,7 +246,8 @@ def main():
             "libc++": ndk / "NOTICE",
         }.items():
             rebuilt.write(license_path, f"META-INF/licenses/{name}.txt")
-        rebuilt.writestr("META-INF/qw-native-build.txt", "WCDB 2.1.15; OpenSSL 3.5.9; Android API 24\n")
+        version = (source / "VERSION").read_text().strip()
+        rebuilt.writestr("META-INF/qw-native-build.txt", f"WCDB {version}; OpenSSL 3.5.9; Android API 24\n")
     seal(pending, abis)
     pending.replace(output)
     if args.release:
