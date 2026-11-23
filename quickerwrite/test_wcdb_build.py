@@ -100,7 +100,7 @@ class ArtifactTests(unittest.TestCase):
         paths = self.root / 'paths'
         env = dict(os.environ, ANDROID_HOME=str(sdk), PATH='/usr/bin:/bin', TEST_ARGS=str(args), GITHUB_PATH=str(paths))
         subprocess.run(['bash', str(Path(__file__).with_name('prepare-android-native.sh'))], env=env, check=True)
-        self.assertEqual(args.read_text().splitlines(), [f'--sdk_root={sdk}', 'ndk;28.2.13676358', 'cmake;3.22.1'])
+        self.assertEqual(args.read_text().splitlines(), [f'--sdk_root={sdk}', 'ndk;28.2.13676358', 'cmake;3.22.1', 'platforms;android-35'])
         self.assertEqual(paths.read_text().strip(), str(sdk / 'cmake/3.22.1/bin'))
 
 

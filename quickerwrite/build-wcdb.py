@@ -79,12 +79,13 @@ def check_submodule_sources():
             raise RuntimeError(f"{name} archive does not match the checked-out submodule revision")
 
 
-def build_java(main_dir, annotations, output):
-    sources = sorted((main_dir / "src/main/java").rglob("*.java"))
+def build_java(main_dir, annotations, android_jar, output):
+    sources = sorted(path for module in (main_dir, main_dir.parent / "compat")
+                     for path in (module / "src/main/java").rglob("*.java"))
     with tempfile.TemporaryDirectory(dir=output.parent) as tmp:
         classes = Path(tmp)
         subprocess.run(["javac", "--release", "8", "-encoding", "UTF-8", "-proc:none",
-                        "-classpath", annotations, "-d", classes, *sources], check=True)
+                        "-classpath", os.pathsep.join(map(str, (annotations, android_jar))), "-d", classes, *sources], check=True)
         with zipfile.ZipFile(output, "w") as jar:
             for path in sorted(classes.rglob("*.class")):
                 entry = zipfile.ZipInfo(path.relative_to(classes).as_posix())
@@ -203,7 +204,7 @@ def main():
         extract(archives[name], source / name)
     main_dir = source / "src/java/main"
     classes = root / "classes.jar"
-    build_java(main_dir, archives["annotations"], classes)
+    build_java(main_dir, archives["annotations"], ndk.parents[1] / "platforms/android-35/android.jar", classes)
     libraries = {}
     for abi in abis:
         target, triple = ABIS[abi]
